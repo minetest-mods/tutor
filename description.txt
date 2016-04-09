@@ -1,0 +1,1 @@
+A Minetest Tutor that helps the player to learn the game basics.
