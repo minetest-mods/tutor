@@ -128,6 +128,22 @@ _item("farm_cotton",
 	{})
 
 
+-- verify that the goal tree is complete and functional
+for _, v in pairs(goals) do
+	if v.target ~= "" and v.target:sub(1,6) ~= "group:" then
+		if not minetest.registered_items[v.target] then
+			print("error in goal target item: (" .. v.target .. ")")
+			print(dump(v))
+		end
+	end
+	for k, vv in pairs(v.n) do
+		if not goals[vv] then
+			print("error in goal next item: (" .. vv .. ")")
+			print(dump(v))
+		end
+	end
+end
+
 TTL_PAUSE = 5 * 60 -- break when idle
 TTL_MSG = 12       -- how long messages stay up
 TTL_NEXT = 2       -- how long in between messages
