@@ -103,7 +103,7 @@ _item("dig_grass",
 	"Wild grass plants grow on grassland\nand many other places, usually\non dirt blocs. If you dig them\nyou may get wheat seeds.",
 	"Looks like you didn't get any seeds\nbut don't worry, just dig a few\nmore grass plants until you\nget some seeds. It only takes\na single seed to get started\nwith a wheat farm.",
 	"dig",
-	"default:grass_5",
+	"default:grass_1",
 	{"farm_wheat"})
 _item("dig_junglegrass",
 	"Dig some jungle grass",
@@ -148,107 +148,111 @@ TTL_PAUSE = 5 * 60 -- break when idle
 TTL_MSG = 12       -- how long messages stay up
 TTL_NEXT = 2       -- how long in between messages
 
+
+--
+-- state table for runtime caching of tutor progress
+--
+local data = {}
+
 --
 -- goal tracking and update
 --
 
-local function hud_show(player, data)
-	player:hud_change(data.hud_bg, "position", {x = 0.8, y = 0.5})
-	player:hud_change(data.hud, "position", {x = 0.8, y = 0.5})
-	data.hud_open = true
+local function hud_show(player)
+	player:hud_change(data[player].hud_bg, "position", {x = 0.8, y = 0.5})
+	player:hud_change(data[player].hud, "position", {x = 0.8, y = 0.5})
+	data[player].hud_open = true
 end
 
-local function hud_hide(player, data)
-	player:hud_change(data.hud_bg, "position", {x = 5.0, y = 0.5})
-	player:hud_change(data.hud, "position", {x = 5.0, y = 0.5})
-	data.hud_open = false
+local function hud_hide(player)
+	player:hud_change(data[player].hud_bg, "position", {x = 5.0, y = 0.5})
+	player:hud_change(data[player].hud, "position", {x = 5.0, y = 0.5})
+	data[player].hud_open = false
 end
 
-local function hud_display(player, data, item)
+local function hud_display(player, item)
 	assert(item)
 	local goal = goals[item]
 	assert(goal.text)
 	assert(goal.description)
 	local description
-	if data.complete[item] then
+	if data[player].complete[item] then
 		description = "You have completed the goal:\n\"" .. goal.text .. "\"!\n\n"
 		description = description .. goal.complete
 	else
 		description = goal.text .. "\n\n" .. goal.description
 	end
 
-	player:hud_change(data.hud, "text", description)
-	hud_show(player, data)
-	data.ttl = TTL_MSG
+	player:hud_change(data[player].hud, "text", description)
+	hud_show(player)
+	data[player].ttl = TTL_MSG
 end
 
-local function hud_update(player, data)
-	if data.ttl > 0 then
-		data.ttl = data.ttl - 1
-		minetest.after(1.0, hud_update, player, data)
+local function hud_update(player)
+	if data[player].ttl > 0 then
+		data[player].ttl = data[player].ttl - 1
+		minetest.after(1.0, hud_update, player)
 		return
 	end
 
-	if not data then
-		local data = datastorage.get(player:get_player_name(), "tutor")
-	end
-
-	if data.hud_open then
+	if data[player].hud_open then
 		-- close the hud for a second, then return
 		-- FIXME assure we've left the last hint open for a minumum of X seconds
-		hud_hide(player, data)
-		data.ttl = TTL_NEXT
-		minetest.after(1.0, hud_update, player, data)
+		hud_hide(player)
+		data[player].ttl = TTL_NEXT
+		minetest.after(1.0, hud_update, player)
 		return
 	end
 
-	if data.disable then
+	if data[player].disable then
 		minetest.sound_play("tutor_open", {to_player = player:get_player_name()})
-		hud_display(player, data, "disable")
+		hud_display(player, "disable")
 		minetest.chat_send_player(player:get_player_name(), "The tutor is now disabled. Type /tutor to re-enable it.")
-		minetest.after(TTL_MSG, hud_hide, player, data)
+		minetest.after(TTL_MSG, hud_hide, player)
 		return
 	end
 
 	-- if we've just completed items, show these first.
-	assert(data.complete)
-	for k, _ in pairs(data.complete) do
+	assert(data[player].complete)
+	local k, _ = next(data[player].complete)
+	if k then
 		minetest.sound_play("tutor_complete", {to_player = player:get_player_name()})
-		hud_display(player, data, k)
-		data.complete[k] = nil
-		minetest.after(1.0, hud_update, player, data)
+		hud_display(player, k)
+		data[player].complete[k] = nil
+		minetest.after(1.0, hud_update, player)
 		return
 	end
 
 	-- then any new goals
-	assert(data.new)
-	for k, _ in pairs(data.new) do
+	assert(data[player].new)
+	k, _ = next(data[player].new)
+	if k then
 		minetest.sound_play("tutor_new", {to_player = player:get_player_name()})
-		hud_display(player, data, k)
-		data.new[k] = nil
-		minetest.after(1.0, hud_update, player, data)
+		hud_display(player, k)
+		data[player].new[k] = nil
+		minetest.after(1.0, hud_update, player)
 		return
 	end
 
 	-- then cycle through active goals
-	if data.last_active then
+	if data[player].last_active then
 		-- continue from where we left off
-		for k, _ in pairs(data.active) do
-			if data.last_active == k then
+		for kk, _ in pairs(data[player].active) do
+			if data[player].last_active == k then
 				-- take the next one in the list
-				local k = next(data.active, k)
-				if k then
+				kk = next(data[player].active, kk)
+				if kk then
 					minetest.sound_play("tutor_open", {to_player = player:get_player_name()})
-					data.last_active = k
-					hud_display(player, data, k)
-					minetest.after(1.0, hud_update, player, data)
+					data[player].last_active = kk
+					hud_display(player, kk)
+					minetest.after(1.0, hud_update, player)
 					return
 				end
 
 				-- go away for a while
-				data.last_active = false
-				data.ttl = TTL_PAUSE
-				minetest.after(1.0, hud_update, player, data)
+				data[player].last_active = false
+				data[player].ttl = TTL_PAUSE
+				minetest.after(1.0, hud_update, player)
 				return
 			end
 		end
@@ -256,29 +260,26 @@ local function hud_update(player, data)
 
 	-- pick first active
 	minetest.sound_play("tutor_open", {to_player = player:get_player_name()})
-	local k = next(data.active, nil)
+	k = next(data[player].active, nil)
 	if not (k) then
 		-- finished the tutorial!
 		-- FIXME some sort of ending message
 		return
 	end
-	data.last_active = k
-	hud_display(player, data, k)
-	minetest.after(1.0, hud_update, player, data)
+	data[player].last_active = k
+	hud_display(player, k)
+	minetest.after(1.0, hud_update, player)
 end
 
-local function active_update(player, data)
-	if not data then
-		local data = datastorage.get(player:get_player_name(), "tutor")
-	end
-	for k, _ in pairs(data.progression) do
+local function active_update(player)
+	for k, _ in pairs(data[player].progression) do
 		assert(goals[k])
 		local vv = goals[k]
 		for _, vvv in pairs(vv.n) do
-			if not data.progression[vvv] then
+			if not data[player].progression[vvv] then
 				assert(goals[vvv])
-				data.new[vvv] = 1
-				data.active[vvv] = 1
+				data[player].new[vvv] = 1
+				data[player].active[vvv] = 1
 				minetest.chat_send_player(player:get_player_name(),
 					"New goal: \"" .. goals[vvv].text .. "\"!")
 			end
@@ -286,30 +287,62 @@ local function active_update(player, data)
 	end
 end
 
-local function tutor_enable(player, data)
-	data.disable = false
-	minetest.after(1.0, hud_update, player, data)
+local function tutor_enable(player)
+	data[player].disable = false
+	minetest.after(1.0, hud_update, player)
 	minetest.after(5.0, function()
 		-- this triggers "start" and initializes everything
-		data.complete["start"] = 1
-		data.progression["start"] = 1
-		active_update(player, data)
-		data.ttl = 0
+		data[player].complete["start"] = 1
+		data[player].progression["start"] = 1
+		active_update(player)
+		data[player].ttl = 0
 	end)
 end
 
+--
+-- shutdown/leave/join handlers loading/saving data
+--
+local function save_player(player)
+	player:set_attribute("tutor_data", minetest.write_json(data[player]))
+	data[player] = nil
+end
+
+minetest.register_on_shutdown(function()
+	for _, player in pairs(minetest.get_connected_players()) do
+		save_player(player)
+	end
+end)
+minetest.register_on_leaveplayer(save_player)
+
 minetest.register_on_joinplayer(function(player)
-	local data = datastorage.get(player:get_player_name(), "tutor")
-	if not data.progression then
-		data.progression = {}
+	local stored = player:get_attribute("tutor_data")
+	if not stored then
+		data[player] = {
+			complete = {},
+			new = {},
+			active = {},
+			progression = {},
+			disabled = false,
+		}
+	else
+		data[player] = minetest.parse_json(stored)
+		if not data[player].complete then
+			data[player].complete = {}
+		end
+		if not data[player].new then
+			data[player].new = {}
+		end
+		if not data[player].active then
+			data[player].active = {}
+		end
+		if not data[player].progression then
+			data[player].progression = {}
+		end
+		if not data[player].disabled then
+			data[player].disabled = false
+		end
 	end
-	if not data.active then
-		data.active = {}
-	end
-	if not type(data.disabled) == "boolean" then
-		data.disabled = false
-	end
-	data.hud_bg = player:hud_add({
+	data[player].hud_bg = player:hud_add({
 		name = "tutor_hints_bg",
 		hud_elem_type = "image",
 		text = "tutor_bg.png",
@@ -317,7 +350,7 @@ minetest.register_on_joinplayer(function(player)
 		scale = {x = 30, y = 30},
 		offset = {x=0, y=0},
 	})
-	data.hud = player:hud_add({
+	data[player].hud = player:hud_add({
 		name = "tutor_hints",
 		hud_elem_type = "text",
 		number = 0xffffff, -- color
@@ -326,22 +359,21 @@ minetest.register_on_joinplayer(function(player)
 		scale = {x=2, y=1},
 		offset = {x=0, y=0},
 	})
-	data.hud_open = false
-	data.complete = {}
-	data.new = {}
-	data.ttl = TTL_PAUSE
-	if data.disabled then
+	data[player].hud_open = false
+	data[player].complete = {}
+	data[player].new = {}
+	data[player].ttl = TTL_PAUSE
+	if data[player].disabled then
 		return
 	end
-	active_update(player, data)
-	tutor_enable(player, data)
+	active_update(player)
+	tutor_enable(player)
 end)
 
 local function check_player_progress(action, player, test)
 	assert(action)
 	assert(test)
-	local data = datastorage.get(player:get_player_name(), "tutor")
-	for k, _ in pairs(data.active) do
+	for k, _ in pairs(data[player].active) do
 		assert(goals[k])
 		local vv = goals[k]
 		if vv.func == action then
@@ -353,13 +385,13 @@ local function check_player_progress(action, player, test)
 					minetest.get_item_group(test, vv.target:sub(7)) > 0)
 			then
 				-- remove this one from active list
-				data.active[k] = nil
+				data[player].active[k] = nil
 				-- mark it completed
-				data.complete[k] = 1
+				data[player].complete[k] = 1
 				-- and put it in the progression list
-				data.progression[k] = 1
-				active_update(player, data)
-				data.ttl = TTL_NEXT
+				data[player].progression[k] = 1
+				active_update(player)
+				data[player].ttl = TTL_NEXT
 				minetest.chat_send_player(player:get_player_name(),
 						"Completed the goal: \"" .. goals[k].text .. "\"!")
 			end
@@ -396,12 +428,11 @@ minetest.register_chatcommand("tutor", {
 	description = "Toggle the tutor state (on|off)",
 	func = function(name, param)
 		local player = minetest.get_player_by_name(name)
-		local data = datastorage.get(player:get_player_name(), "tutor")
-		if data.disable then
-			data.disable = false
-			tutor_enable(player, data)
+		if data[player].disable then
+			data[player].disable = false
+			tutor_enable(player)
 		else
-			data.disable = true
+			data[player].disable = true
 		end
 	end
 })
